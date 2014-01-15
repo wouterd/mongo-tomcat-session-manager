@@ -147,7 +147,7 @@ public class MongoDBStore extends StoreBase {
 
     private void ensureIndexes() {
         getSessionCollection().ensureIndex(
-                new BasicDBObject("expires_after", 1), new BasicDBObject("expireAfterSeconds", 0)
+                new BasicDBObject(SESSION_EXPIRES_AFTER_FIELD, 1), new BasicDBObject("expireAfterSeconds", 0)
         );
     }
 
