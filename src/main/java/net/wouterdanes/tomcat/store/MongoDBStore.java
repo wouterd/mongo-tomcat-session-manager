@@ -20,7 +20,8 @@ import org.apache.catalina.Session;
 import org.apache.catalina.session.StoreBase;
 
 /**
- * Created by wouter on 14-01-14.
+ * Implementation of a {@link org.apache.catalina.Store} that persists to MongoDB. It is an alternative to
+ * {@link org.apache.catalina.session.JDBCStore} which uses TTL indexes in mongo to handle expiry on sessions.
  */
 public class MongoDBStore extends StoreBase {
 
@@ -62,17 +63,22 @@ public class MongoDBStore extends StoreBase {
 
     @Override
     public Session load(final String id) throws ClassNotFoundException, IOException {
+        manager.getContainer().getLogger().debug("Attempting to load session from mongo with id = " + id);
         DBCollection sessionCollection = getSessionCollection();
         BasicDBObject findObject = new BasicDBObject(SESSION_ID_FIELD, id);
         BasicDBObject fields = new BasicDBObject(SESSION_DATA_FIELD, 1);
         DBObject sessionDocument = sessionCollection.findOne(findObject, fields);
         if (sessionDocument == null) {
+            manager.getContainer().getLogger().debug("Cannot find session with id = " + id);
             return null;
         }
         byte[] sessionData = (byte[]) sessionDocument.get(SESSION_DATA_FIELD);
-        ByteArrayInputStream bais = new ByteArrayInputStream(sessionData);
-        ObjectInputStream ois = new ObjectInputStream(bais);
-        return (Session) ois.readObject();
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(sessionData);
+             ObjectInputStream ois = new ObjectInputStream(bais)) {
+            manager.getContainer().getLogger().debug("Session found for id = " + id +
+                    ", deserializing and returning it.");
+            return (Session) ois.readObject();
+        }
     }
 
     @Override
@@ -89,10 +95,13 @@ public class MongoDBStore extends StoreBase {
 
     @Override
     public void save(final Session session) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ObjectOutputStream oos = new ObjectOutputStream(baos);
-        oos.writeObject(session);
-        byte[] sessionData = baos.toByteArray();
+        manager.getContainer().getLogger().debug("Saving session to mongo with id = " + session.getId());
+        byte[] sessionData;
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+            oos.writeObject(session);
+            sessionData = baos.toByteArray();
+        }
         BasicDBObject sessionDocument = new BasicDBObject(3);
         if (session.getMaxInactiveInterval() >= 0) {
             Calendar expiresAfter = new GregorianCalendar();
@@ -118,6 +127,7 @@ public class MongoDBStore extends StoreBase {
 
     private void ensureConnection() {
         if (mongo == null) {
+            manager.getContainer().getLogger().info("Initializing mongo client with uri '" + uri + "'");
             try {
                 MongoClientURI mongoClientURI = new MongoClientURI(uri);
                 mongo = new MongoClient(mongoClientURI);
